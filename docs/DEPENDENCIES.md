@@ -1,29 +1,7 @@
-# Dependency review — 2026-10-03 KST
+# Dependency verification
 
-The complete dependency tree passed `pnpm audit`: zero known advisories. All 41 software tests and the production build passed on the pinned installation. The supported `qloo exec --help` startup check and `qloo api` commands with synthetic responses also passed. No live Qloo API request was made.
+The standalone Node/MCP tree uses pnpm 12.8.1 with the pinned Qloo harness and scoped Undici/brace-expansion patches. Its audit found no known advisories in the checked tree; software tests50passed.
 
-## Reproducible patches
+The hosted runtime was updated after the initial submission to Next16.3.8, React/React DOM/RSC19.3.0, Vinext1.0.1, Vite8.3.3, Cloudflare Vite plugin1.62.5 and Wrangler4.147.0. The locked baseline-browser-mapping2.11.0 and fast-uri3.1.8 overrides address the remaining runtime findings. Production dependency audit:zero known findings. Full development-tool audit still includes build/lint/generator-chain advisories; this is not a claim of universal application security.
 
-Use pnpm 12.8.1 and the committed `pnpm-lock.yaml`. `pnpm-workspace.yaml` applies two scoped overrides:
-
-| Dependency | Original | Patched |
-| --- | --- | --- |
-| Undici under Pi coding agent | 8.9.0 | 8.10.2 |
-| brace-expansion in the affected version-5 range | 5.0.9 | 5.0.12 |
-
-The official Qloo harness remains at 0.1.26 and Pi remains at 0.84.2. Their source files were not patched or replaced. On October 6 the unchanged harness moved to runtime dependencies for the gated provider factory. The new dependency audit also found zero advisories; all 46 software tests and the production build passed. No live event request was made.
-
-The original npm installation reported four affected packages through those two dependencies. Its published dependency shrinkwrap retained the old versions despite root overrides. The pnpm installation applies the patches, and a second clean install from the frozen lockfile reproduced them. Do not use `npm install` or regenerate an npm lockfile for this project; it would not preserve this verified installation path.
-
-## Verify
-
-```sh
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm audit
-pnpm test
-pnpm build
-```
-
-The audit includes development dependencies; no advisory was excluded or suppressed. A zero-advisory result is time-bound evidence, not proof that the application has no security defects.
-
-References: [pnpm scoped overrides](https://pnpm.io/settings/dependency-resolution#overrides), [npm override and published shrinkwrap behavior](https://docs.npmjs.com/cli/v10/configuring-npm/package-json/#overrides), [brace-expansion advisory](https://github.com/advisories/GHSA-qhr7-859c-m2p7), [Undici advisory](https://github.com/advisories/GHSA-w293-vg96-wgc3).
+The live app exposes no custom image-generation or server-function endpoint and keeps the Qloo key in runtime secrets. No creator SKILL.md or plugin template original was modified. Installed patched dependencies and the Sites build were verified before deployment.
