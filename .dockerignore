@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+*.log
+coverage
+tests
+docs
+*.zip
+*credential*
+*access.json
+*budget.json
