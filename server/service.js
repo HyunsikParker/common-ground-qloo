@@ -4,6 +4,10 @@ import { rankCommonGround } from './ranking.js';
 import { entities, sampleGroup, FixtureProvider } from './fixture-provider.js';
 import { candidatePool } from './candidate-pool.js';
 import { publicArea } from './area.js';
+import { DEFAULT_VENUE_TYPE, VENUE_TYPES, requireVenueType } from './venue-types.js';
+import { PUBLIC_EXAMPLE_SNAPSHOT } from './public-example.js';
+
+const signatureFor = (area, venueType, members) => JSON.stringify({ area, venueType, members: [...members].sort((a, b) => a.id.localeCompare(b.id)) });
 
 export function validateGroups(groups, confirmed) {
   if (!Array.isArray(groups) || groups.length < 2 || groups.length > 6) throw new AppError('invalid_group', 'Add two to six people.');
@@ -24,16 +28,18 @@ export class GroupService {
     this.provider = provider; this.revision = 0; this.confirmed = new Map(); this.resolutions = new Map();
     this.groups = []; this.excluded = new Set(); this.evidence = null; this.tail = Promise.resolve();
     this.area = provider.area ?? 'Example neighborhood';
+    this.venueType = DEFAULT_VENUE_TYPE;
   }
   enqueue(action) {
     const pending = this.tail.then(action); this.tail = pending.catch(() => {}); return pending;
   }
   state() {
-    return { mode: this.provider.mode, provenance: this.provider.provenance, area: this.area, revision: this.revision,
+    return { mode: this.provider.mode, provenance: this.provider.provenance, area: this.area, venueType: this.venueType,
+      venueTypes: VENUE_TYPES.map(({ id, label }) => ({ id, label })), revision: this.revision,
       groups: this.groups, entities: [...this.confirmed.values()], comparison: this.result() };
   }
   result() {
-    return this.evidence ? { ...rankCommonGround({ ...this.evidence, excluded: [...this.excluded] }), pool: this.evidence.pool, provenance: this.provider.provenance, evidenceAt: this.evidence.generatedAt ? new Date(this.evidence.generatedAt).toISOString() : null } : null;
+    return this.evidence ? { ...rankCommonGround({ ...this.evidence, excluded: [...this.excluded] }), pool: this.evidence.pool, provenance: this.provider.provenance, evidenceSource: this.evidence.source ?? null, evidenceAt: this.evidence.generatedAt ? new Date(this.evidence.generatedAt).toISOString() : null } : null;
   }
   async resolve(query) {
     if (typeof query !== 'string' || query.trim().length < 2 || query.length > 100 || /@|\d{9,}/.test(query)) {
@@ -52,24 +58,28 @@ export class GroupService {
     this.confirmed.set(entity.id, entity); this.resolutions.delete(resolutionId); this.revision++;
     return { entity, revision: this.revision };
   }
-  async compare(groups, area = this.area) {
+  async compare(groups, area = this.area, venueType = this.venueType) {
     const members = validateGroups(groups, this.confirmed);
     const meetingArea = this.provider.mode === 'qloo' ? publicArea(area) : 'Example neighborhood';
+    const selectedVenueType = requireVenueType(venueType).id;
     if (this.provider.mode !== 'qloo' && area !== meetingArea) throw new AppError('area_unavailable', 'The fictional sample is available only in its example neighborhood.');
-    const signature=JSON.stringify({area:meetingArea,members:[...members].sort((a,b)=>a.id.localeCompare(b.id))});
-    if(this.provider.mode==='qloo'&&this.evidence?.signature===signature&&Date.now()-this.evidence.generatedAt<10*60000){this.groups=members;this.revision++;return this.state();}
+    const signature = signatureFor(meetingArea, selectedVenueType, members);
+    if (this.provider.mode === 'qloo' && this.evidence?.signature === signature && (this.evidence.source === 'snapshot' || Date.now() - this.evidence.generatedAt < 10 * 60000)) { this.groups = members; this.venueType = selectedVenueType; this.revision++; return this.state(); }
     const nominations = [];
     // Sequential, bounded provider calls. No burst parallelism against an event quota.
     for (const member of [...members].sort((a, b) => a.id.localeCompare(b.id))) {
-      const suggestions = await this.provider.suggest(member.entityIds, meetingArea);
-      nominations.push(suggestions);
+      const suggestions = await this.provider.suggest(member.entityIds, meetingArea, selectedVenueType);
+      nominations.push(suggestions.map(place => {
+        const { explanation, ...candidate } = place;
+        return { ...candidate, explanations: explanation ? [{ memberId: member.id, contributions: explanation }] : [] };
+      }));
     }
     const pool = candidatePool(nominations);
     const candidates = pool.candidates;
     const scores = {};
     for (const member of members) scores[member.id] = candidates.length ? await this.provider.rank(member.entityIds, candidates.map(p => p.id)) : {};
     // Commit only a fully completed provider transaction; a failed refresh never installs partial output.
-    this.groups = members; this.area = meetingArea; this.evidence = { candidates, members, scores, signature, generatedAt:Date.now(), pool: { nominatedCount: pool.nominatedCount, omittedCount: pool.omittedCount, limit: pool.limit } }; this.revision++;
+    this.groups = members; this.area = meetingArea; this.venueType = selectedVenueType; this.evidence = { candidates, members, scores, signature, generatedAt: Date.now(), source: this.provider.mode === 'qloo' ? 'live' : 'fixture', pool: { nominatedCount: pool.nominatedCount, omittedCount: pool.omittedCount, limit: pool.limit } }; this.revision++;
     return this.state();
   }
   veto(id, restore = false) {
@@ -80,25 +90,27 @@ export class GroupService {
   async sample() {
     if (this.provider.mode !== 'fixture') throw new AppError('sample_unavailable', 'Samples are not live Qloo results.', 409);
     this.reset();
-    for (const { signal, ...entity } of entities) this.confirmed.set(entity.id, entity);
+    for (const item of entities) { const entity = { id: item.id, name: item.name, kind: item.kind, detail: item.detail }; this.confirmed.set(entity.id, entity); }
     return this.compare(structuredClone(sampleGroup));
   }
-  async publicExample(){
-    if(this.provider.mode!=='qloo')throw new AppError('sample_unavailable','Use the fictional sample in sample mode.',409);
-    const example=[
-      {id:'C7EC4CA9-1CCC-4991-B738-55F075441B3F',name:'Arrival',kind:'Film',detail:'2016 film directed by Denis Villeneuve'},
-      {id:'578CFC26-B696-449A-9655-3FB270DDA725',name:'Miles Davis',kind:'Artist',detail:'Jazz trumpeter and composer'},
-      {id:'1B088E28-0668-4670-A97B-87865A1FCBCF',name:'Brian Eno',kind:'Artist',detail:'Musician and composer'},
-    ];
-    const pending=new GroupService(this.provider);
-    pending.revision=this.revision;pending.confirmed=new Map(this.confirmed);pending.resolutions=new Map(this.resolutions);pending.excluded=new Set(this.excluded);pending.evidence=this.evidence;pending.area=this.area;
-    for(const entity of example)pending.confirmed.set(entity.id,entity);
-    await pending.compare(example.map((entity,i)=>({id:`person-${i+1}`,entityIds:[entity.id]})),this.area);
-    for(const name of ['revision','confirmed','resolutions','excluded','evidence','area','groups'])this[name]=pending[name];
+  async publicExample(snapshot = PUBLIC_EXAMPLE_SNAPSHOT) {
+    if (this.provider.mode !== 'qloo') throw new AppError('sample_unavailable', 'Use the fictional sample in sample mode.', 409);
+    const copy = snapshot ? structuredClone(snapshot) : null;
+    const captured = Date.parse(copy?.capturedAt);
+    if (copy?.version !== 1 || !Number.isFinite(captured) || !Array.isArray(copy.entities) || !Array.isArray(copy.groups) || !copy.evidence) throw new AppError('sample_unavailable', 'The public example snapshot is unavailable.', 503);
+    const confirmed = new Map(copy.entities.map(entity => [entity.id, entity]));
+    if (confirmed.size !== copy.entities.length) throw new AppError('sample_unavailable', 'The public example snapshot is invalid.', 503);
+    const groups = validateGroups(copy.groups, confirmed);
+    const area = publicArea(copy.area); const venueType = requireVenueType(copy.venueType).id;
+    const evidence = { ...copy.evidence, members: groups, signature: signatureFor(area, venueType, groups), generatedAt: captured, source: 'snapshot' };
+    rankCommonGround({ ...evidence, excluded: [] });
+    const candidateIds = new Set(evidence.candidates.map(candidate => candidate.id));
+    this.confirmed = confirmed; this.resolutions.clear(); this.groups = groups; this.area = area; this.venueType = venueType; this.evidence = evidence;
+    this.excluded = new Set([...this.excluded].filter(id => candidateIds.has(id))); this.revision++;
     return this.state();
   }
   reset() {
-    this.groups = []; this.confirmed.clear(); this.resolutions.clear(); this.excluded.clear(); this.evidence = null; this.area = this.provider.area ?? 'Example neighborhood'; this.revision++;
+    this.groups = []; this.confirmed.clear(); this.resolutions.clear(); this.excluded.clear(); this.evidence = null; this.area = this.provider.area ?? 'Example neighborhood'; this.venueType = DEFAULT_VENUE_TYPE; this.revision++;
     return this.state();
   }
 }

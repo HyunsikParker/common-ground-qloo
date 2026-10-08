@@ -10,7 +10,8 @@ export function candidatePool(nominations, limit = 10) {
     }
     list.forEach((place, position) => {
       if (!place || typeof place.id !== 'string' || !place.id || typeof place.name !== 'string') throw new AppError('invalid_provider_result', 'The provider returned an invalid place.', 502);
-      places.set(place.id, place);
+      const previous = places.get(place.id);
+      places.set(place.id, previous ? { ...previous, ...place, explanations: [...(previous.explanations ?? []), ...(place.explanations ?? [])] } : place);
       if (position === 0) first.add(place.id);
       const vote = votes.get(place.id) ?? { support: 0, positionSum: 0 };
       vote.support++; vote.positionSum += position; votes.set(place.id, vote);

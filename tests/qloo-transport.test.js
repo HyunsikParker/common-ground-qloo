@@ -16,7 +16,7 @@ import { PassThrough } from 'node:stream';
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const row = (n, type = 'place') => ({ entity_id: id(n), type: `urn:entity:${type}`, name: `Synthetic ${type} ${n}`, query: { affinity: n / 100 }, properties: { description: 'Invented test record', private_field: 'Not for clients' }, private_field: 'Not for clients' });
 const search = { query: 'Arrival', types: 'urn:entity:movie', take: 4 };
-const recommend = { target_type: 'place', signals: [id(1)], filter_location: 'Manhattan, New York', explain: true, limit: 4 };
+const recommend = { target_type: 'place', signals: [id(1)], filter_location: 'Manhattan, New York', include_tags: ['urn:tag:genre:place:restaurant:cafe'], include_tags_operator: 'union', explain: true, limit: 4 };
 const rank = { option_type: 'place', signals: [id(1)], options: [id(11), id(12)] };
 const preload = fileURLToPath(new URL('./support/offline-qloo-fetch.mjs', import.meta.url));
 
@@ -69,6 +69,7 @@ test('the real official qloo api CLI completes search, recommendation and suppli
   assert.equal(calls[1].params['filter.type'], 'urn:entity:place');
   assert.equal(calls[1].params['signal.interests.entities'], id(1));
   assert.equal(calls[1].params['filter.location.query'], 'Manhattan, New York');
+  assert.equal(calls[1].params['filter.tags'], 'urn:tag:genre:place:restaurant:cafe');
   assert.equal(calls[2].params['filter.results.entities'], rank.options.join(','));
   assert.equal(calls[2].params.take, '2');
 });
@@ -113,9 +114,9 @@ test('the actual API types-array shape is preserved as an entity type without in
 });
 
 test('generic Insights entity metadata uses its documented place filter, while explicit conflicting types remain rejected', async t => {
-  const f=fixture(t);const transport=f.transport({body:{results:{entities:[{...row(11),type:'urn:entity'}]}}});
+  const f=fixture(t);const transport=f.transport({body:{results:{entities:[{...row(11),type:'urn:entity',query:{affinity:.5,explainability:{'signal.interests.entities':[{entity_id:id(1),score:1}]}}}]}}});
   const provider=new QlooProvider({client:transport.client,executor:transport.executor,area:recommend.filter_location});
-  assert.equal((await provider.suggest([id(1)]))[0].kind,'Place');
+  const suggested=await provider.suggest([id(1)]);assert.equal(suggested[0].kind,'Cafe');assert.deepEqual(suggested[0].explanation,[{entityId:id(1),score:1}]);
   const conflicting=f.transport({body:{results:{entities:[row(12,'artist')]}}});
   await assert.rejects(new QlooProvider({client:conflicting.client,executor:conflicting.executor,area:recommend.filter_location}).suggest([id(1)]),{code:'invalid_provider_result'});
 });
@@ -199,7 +200,7 @@ test('unsupported commands, excessive options and contact inputs cannot spawn a 
   const f = fixture(t); const transport = f.transport();
   for (const [operation, input] of [
     ['search', { ...search, types: 'urn:entity:person' }], ['search', { ...search, query: 'name@example.invalid' }],
-    ['search', { ...search, query: 'line\nbreak' }], ['recommend', { ...recommend, signals: ['Arrival'] }],
+    ['search', { ...search, query: 'line\nbreak' }], ['recommend', { ...recommend, signals: ['Arrival'] }], ['recommend', { ...recommend, include_tags: ['urn:tag:genre:place:landmark'] }],
     ['rank', { ...rank, options: Array.from({ length: 11 }, (_, n) => id(n + 11)) }], ['unknown', {}],
   ]) assert.throws(() => transport.invoke(operation, input), { code: 'invalid_provider_input' });
   assert.equal(f.children(), 0); assert.equal(f.calls().length, 0); assert.equal(f.budget().used, 0);

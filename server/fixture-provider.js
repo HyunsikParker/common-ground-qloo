@@ -31,7 +31,7 @@ export class FixtureProvider {
   provenance = 'Synthetic fixture evidence. Venues and affinity values are invented; no Qloo request was made.';
   async search(query) {
     const q = query.toLowerCase();
-    return entities.filter(e => `${e.name} ${e.detail} ${e.kind}`.toLowerCase().includes(q)).map(({ signal, ...e }) => e);
+    return entities.filter(e => `${e.name} ${e.detail} ${e.kind}`.toLowerCase().includes(q)).map(e => ({ id: e.id, name: e.name, kind: e.kind, detail: e.detail }));
   }
   async suggest(entityIds) {
     const scores = await this.rank(entityIds, venues.map(v => v.id));

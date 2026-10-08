@@ -1,5 +1,6 @@
 import { AppError } from './errors.js';
 import { publicArea } from './area.js';
+import { requireVenueType } from './venue-types.js';
 
 const schema = '1.0-preview.1';
 const types = new Map([['urn:entity:book', 'Book'], ['urn:entity:movie', 'Film'], ['urn:entity:artist', 'Artist']]);
@@ -43,6 +44,19 @@ function entity(row) {
   return { id: row.entity_id, name: text(row.name, 180) };
 }
 
+function explanation(row, signals) {
+  if (row.explainability === undefined) return null;
+  const values = row.explainability?.signals;
+  if (!Array.isArray(values) || values.length > signals.length) throw invalid();
+  const seen = new Set();
+  return values.map(value => {
+    const entityId = value?.entity_id;
+    if (!signals.includes(entityId) || seen.has(entityId) || !Number.isFinite(value?.score) || value.score < 0 || value.score > 1) throw invalid();
+    seen.add(entityId);
+    return { entityId, score: value.score };
+  });
+}
+
 // The caller must supply an approved, budgeted Qloo client and official harness
 // executor. There is deliberately no environment lookup or network fallback here.
 // configuredProvider requires verified private access before constructing it.
@@ -73,11 +87,12 @@ export class QlooProvider {
       return [...found.values()];
     } catch (error) { throw providerError(error); }
   }
-  async suggest(entityIds, area = this.area) {
+  async suggest(entityIds, area = this.area, venueType) {
     const signals = ids(entityIds, 4);
     const meetingArea = publicArea(area);
+    const venue = requireVenueType(venueType);
     try {
-      const result = await this.executor.execute('recommend', { target_type: 'place', signals, filter_location: meetingArea, explain: true, limit: 4 });
+      const result = await this.executor.execute('recommend', { target_type: 'place', signals, filter_location: meetingArea, include_tags: [venue.tagId], include_tags_operator: 'union', explain: true, limit: 4 });
       const rows = workflowResults(result, 'recommend');
       if (rows.length > 4) throw invalid();
       const seen = new Set();
@@ -85,7 +100,7 @@ export class QlooProvider {
         const item = entity(row);
         if (row.type !== 'urn:entity:place' || seen.has(item.id)) throw invalid();
         seen.add(item.id);
-        return { ...item, kind: 'Place', note: text(row.properties?.short_description ?? row.properties?.description, 300) || 'Qloo did not provide a description.', area: meetingArea, openingHours: null, price: null };
+        return { ...item, kind: venue.label, note: text(row.properties?.short_description ?? row.properties?.description, 300) || 'Qloo did not provide a description.', explanation: explanation(row, signals), area: meetingArea, openingHours: null, price: null };
       });
     } catch (error) { throw providerError(error); }
   }

@@ -1,11 +1,15 @@
 # Deployment
 
-The deployed web source is in `hosted/`. It uses Vinext on Cloudflare Workers with a D1 binding named `DB`. The schema and generated migration are included. A sanitized hosting manifest declares DB but omits the owner's Site identity; use your own project identity when publishing a clone.
+The public web source is in `hosted/`. It uses Vinext on Cloudflare Workers with a D1 binding named `DB`. The schema and generated migration are included. A sanitized hosting manifest declares the binding but omits the owner's Site identity; a clone needs its own project identity.
 
-QLOO_API_KEY is a runtime secret. Configure the exact event key at the host, never in source, browser assets, a recording or a public MCP configuration. The deployed adapter uses the documented event HTTP endpoints and rejects every redirect before any second request. The Node/MCP adapter uses the official Qloo CLI with an isolated environment.
+`QLOO_API_KEY` is a runtime secret. Configure the exact event key at the host, never in source, browser assets, a recording or a public MCP configuration. The Worker accepts only `https://hackathon.api.qloo.com`, rejects redirects before any second request and never retries automatically.
 
-Provision the D1 allowance once, while the Site is owner-private, through `/api/bootstrap` with the already-spent local request count. The operator cap is 1000 requests with one-second spacing and a stop time of November 17 at 04:45 UTC. These are operator limits, not issuer quotas or a claimed key expiration. Disable ALLOWANCE_INITIALIZATION_ALLOWED before public access. A changed or missing allowance must stop requests; redeployment must not reset usage. If a local runtime shares the same key, suspend its separate allowance after handing it to the hosted database.
+Provision the D1 allowance once while the Site is owner-private, using `/api/bootstrap` and the already-spent count. Set `ALLOWANCE_INITIALIZATION_ALLOWED=false` before public access. The guard combines the durable D1 row with the recorded off-platform offset. A missing or changed row stops requests, and redeployment must not reset either component.
 
-The public app requires no account. Anonymous sessions expire after twenty minutes and identical comparisons cache completed evidence for ten minutes while preserving vetoes. Verify public access in a normal browser and the actual search/confirm/compare/exclude/restore flow before submitting a clone. Generic unauthenticated command-line clients may receive the hosting platform's browser-signature block; do not spoof a signature or expose a service token as a demo credential.
+The 1,000-request cap, one-second spacing and November 17 at 04:45 UTC stop time are operator safeguards, not issuer quotas or a claimed credential expiration. The page reads the effective remaining allowance without exposing the key or policy hash.
 
-The optional Dockerfile supports the standalone Node app and its private external access files. It was prepared but not built in this verification because the local Docker daemon was stopped. It is not the deployment path used for the public demo.
+The fixed public-example snapshot is compiled into the server source and makes no Qloo request. Live comparisons cache completed evidence for ten minutes only when the confirmed group, public area and venue type are unchanged in the same anonymous session. Sessions expire after 20 minutes; exclusions remain local to the session.
+
+Before publishing a clone, run `npm run lint` and `npm run build`, apply the D1 migration, verify the public page in a normal browser, confirm that the example does not move the allowance, and run one bounded search/confirm/compare flow. Generic command-line clients may meet the hosting platform's browser-signature block; do not spoof a browser or expose a service token.
+
+The optional root Dockerfile supports the standalone Node app with private access files mounted outside the image. It is not the deployment path used by the public demo.

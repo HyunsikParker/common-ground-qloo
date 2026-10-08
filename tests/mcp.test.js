@@ -19,8 +19,9 @@ test('a real MCP client resolves, confirms, compares and vetoes through stdio', 
   const id = choices.choices[0].id; const groups = [1, 2].map(n => ({ id: `person-${n}`, entityIds: [id] }));
   assert.equal((await call('compare_places', { groups })).isError, true);
   assert.ok(!(await call('confirm_interest', { resolutionId: choices.resolutionId, entityId: id })).isError);
-  result = await call('compare_places', { groups }); assert.ok(!result.isError);
+  result = await call('compare_places', { groups, venueType: 'bar' }); assert.ok(!result.isError);
   assert.equal(result.structuredContent.mode, 'fixture');
+  assert.equal(result.structuredContent.venueType, 'bar');
   const venue = result.structuredContent.comparison.candidates[0].id;
   result = await call('exclude_place', { id: venue });
   assert.ok(result.structuredContent.comparison.candidates.every(c => c.id !== venue));
@@ -35,7 +36,9 @@ test('MCP announces external access only for tools that can request Qloo data', 
   t.after(async () => { await client.close(); await server.close(); });
   const tools = (await client.listTools()).tools;
   for (const tool of tools) assert.equal(tool.annotations.openWorldHint, ['search_interests', 'compare_places'].includes(tool.name));
-  assert.ok(tools.find(tool => tool.name === 'compare_places').inputSchema.properties.area);
+  const compareSchema = tools.find(tool => tool.name === 'compare_places').inputSchema;
+  assert.ok(compareSchema.properties.area);
+  assert.deepEqual(compareSchema.properties.venueType.enum, ['cafe', 'bar', 'restaurant', 'music-venue']);
   const state = await client.callTool({ name: 'get_group', arguments: {} });
   assert.equal(state.structuredContent.area, 'Manhattan, New York');
 });

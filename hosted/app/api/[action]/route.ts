@@ -1,13 +1,15 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- D1 rows and the JavaScript domain boundary are validated before use. */
 import {env} from 'cloudflare:workers';
 import {GroupService} from '../../../lib/domain/service.js';
 import {AppError,publicError} from '../../../lib/domain/errors.js';
-import {hostedProvider,policyHash} from '../../../lib/qloo-http';
+import {allowanceStatus,hostedProvider,policyHash} from '../../../lib/qloo-http';
 
 export const dynamic='force-dynamic';
 const lifetime=20*60000;
 function reply(value:any,status=200,cookie?:string){return Response.json(value,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff',...(cookie?{'set-cookie':cookie}:{})}});}
-function encode(s:any){return JSON.stringify({revision:s.revision,area:s.area,groups:s.groups,confirmed:[...s.confirmed],resolutions:[...s.resolutions],excluded:[...s.excluded],evidence:s.evidence});}
-function hydrate(provider:any,text:string){const x=JSON.parse(text),s=new GroupService(provider);s.revision=x.revision;s.area=x.area;s.groups=x.groups;s.confirmed=new Map(x.confirmed);s.resolutions=new Map(x.resolutions);s.excluded=new Set(x.excluded);s.evidence=x.evidence;return s;}
+function encode(s:any){return JSON.stringify({revision:s.revision,area:s.area,venueType:s.venueType,groups:s.groups,confirmed:[...s.confirmed],resolutions:[...s.resolutions],excluded:[...s.excluded],evidence:s.evidence});}
+function hydrate(provider:any,text:string){const x=JSON.parse(text),s=new GroupService(provider);s.revision=x.revision;s.area=x.area;s.venueType=x.venueType??s.venueType;s.groups=x.groups;s.confirmed=new Map(x.confirmed);s.resolutions=new Map(x.resolutions);s.excluded=new Set(x.excluded);s.evidence=x.evidence;return s;}
+async function runtimeState(db:D1Database,value:any){return{...value,allowance:await allowanceStatus(db)};}
 
 async function handle(request:Request){
   const cfg=env as any,db:D1Database=cfg.DB,url=new URL(request.url),action=url.pathname.split('/').pop();
@@ -39,7 +41,7 @@ async function handle(request:Request){
       await db.prepare('INSERT INTO group_sessions(id,state,expires_at,window_at,request_count,busy_until) VALUES(?,?,?,?,?,?)').bind(id,row.state,row.expires_at,now,0,0).run();
       cookie=`cg_session=${id}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=1200${url.protocol==='https:'?'; Secure':''}`;
     }
-    if(request.method==='GET'&&action==='session')return reply(hydrate(provider,row.state).state(),200,cookie);
+    if(request.method==='GET'&&action==='session')return reply(await runtimeState(db,hydrate(provider,row.state).state()),200,cookie);
     if(request.method!=='POST')throw new AppError('method_not_allowed','Use a supported request method.',405);
     if(!request.headers.get('content-type')?.startsWith('application/json'))throw new AppError('content_type','Send JSON.',415);
     const raw=await request.text();if(new TextEncoder().encode(raw).length>12000)throw new AppError('request_too_large','This request is too large.',413);
@@ -57,7 +59,7 @@ async function handle(request:Request){
     switch(action){
       case'resolve':result=await service.resolve(input.query);break;
       case'confirm':result=service.confirm(input.resolutionId,input.entityId);break;
-      case'compare':result=await service.compare(input.groups,input.area);break;
+      case'compare':result=await service.compare(input.groups,input.area,input.venueType);break;
       case'example':result=await service.publicExample();break;
       case'exclude':result=service.veto(input.id);break;
       case'restore':result=service.veto(input.id,true);break;
@@ -66,7 +68,7 @@ async function handle(request:Request){
     }
     const saved=await db.prepare('UPDATE group_sessions SET state=?,expires_at=?,busy_until=0,lock_token=NULL WHERE id=? AND lock_token=? RETURNING id').bind(encode(service),Date.now()+lifetime,id,lock).first();
     if(!saved)throw new AppError('stale_session','This operation lost its session lock. Reload the group.',409);
-    lock=undefined;return reply(result,200,cookie);
+    lock=undefined;return reply(await runtimeState(db,result),200,cookie);
   }catch(e){const safe=publicError(e);return reply({error:safe.error},safe.status);}
   finally{if(lock&&id)await db.prepare('UPDATE group_sessions SET busy_until=0,lock_token=NULL WHERE id=? AND lock_token=?').bind(id,lock).run();}
 }

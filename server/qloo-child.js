@@ -25,6 +25,15 @@ async function readInput() {
   try { return JSON.parse(result); } catch { throw new AppError('invalid_provider_input', 'The Qloo request is invalid.'); }
 }
 
+function explainability(row) {
+  const values = row?.query?.explainability?.['signal.interests.entities'];
+  if (values === undefined) return undefined;
+  if (!Array.isArray(values) || values.length > 4) return { invalid: true };
+  const signals = values.map(value => ({ entity_id: value?.entity_id, score: value?.score }));
+  if (signals.some(value => typeof value.entity_id !== 'string' || !Number.isFinite(value.score))) return { invalid: true };
+  return { signals };
+}
+
 async function run() {
   const { operation, input, accessFile } = await readInput();
   const command = qlooCommand(operation, input);
@@ -83,7 +92,7 @@ async function run() {
     type: (typeof row.type === 'string' && /^urn:entity:/.test(row.type) ? row.type : undefined)
       ?? (Array.isArray(row.types) ? row.types.find(type => /^urn:entity:/.test(type)) : undefined)
       ?? (row.type === 'urn:entity' && command.endpoint === '/v2/insights' ? 'urn:entity:place' : row.type),
-    affinity: row.affinity ?? row.query?.affinity, properties: { release_year: row.properties?.release_year, description: row.properties?.description, short_description: row.properties?.short_description } })) };
+    affinity: row.affinity ?? row.query?.affinity, explainability: explainability(row), properties: { release_year: row.properties?.release_year, description: row.properties?.description, short_description: row.properties?.short_description } })) };
 }
 
 let result;

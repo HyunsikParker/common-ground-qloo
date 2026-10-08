@@ -18,8 +18,9 @@ test('HTTP journey binds the session, rejects stale/cross-origin writes, and kee
   response = await post('exclude', { revision: state.revision, id }); assert.equal(response.status, 200); const excluded = await response.json();
   assert.ok(excluded.comparison.candidates.every(c => c.id !== id));
   assert.equal((await post('restore', { revision: state.revision, id })).status, 409);
-  response = await post('compare', { revision: excluded.revision, groups: state.groups }); state = await response.json();
+  response = await post('compare', { revision: excluded.revision, groups: state.groups, venueType: 'bar' }); state = await response.json();
   assert.ok(state.comparison.candidates.every(c => c.id !== id));
+  assert.equal(state.venueType, 'bar');
   const isolated = await (await fetch(`${base}/api/session`)).json(); assert.equal(isolated.comparison, null);
   assert.equal((await fetch(`${base}/.env`)).status, 404);
   assert.equal((await fetch(`${base}/assets/%2e%2e%2f%2e%2e%2fpackage.json`)).status, 404);

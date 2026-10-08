@@ -51,6 +51,7 @@ test('the pinned official harness executes the shared-shortlist pipeline without
   for (const query of queries.slice(0, 2)) {
     assert.equal(query['filter.location.query'], 'Manhattan, New York');
     assert.equal(query['filter.type'], 'urn:entity:place');
+    assert.deepEqual(query['filter.tags'], ['urn:tag:genre:place:restaurant:cafe']);
     assert.equal(query.take, 4);
   }
   for (const query of queries.slice(2)) assert.deepEqual(query['filter.results.entities'], venues.map(item => item.entity_id));
@@ -122,11 +123,21 @@ test('empty recommendations stay empty and cannot become fixture venues', async 
 
 test('the requested public area reaches nomination without changing a shared provider default', async () => {
   const { provider, calls } = fixture();
-  const venues = await provider.suggest([film.entity_id], 'Brooklyn, New York');
+  const venues = await provider.suggest([film.entity_id], 'Brooklyn, New York', 'music-venue');
   assert.equal(calls.find(item => item.operation === 'insights').query['filter.location.query'], 'Brooklyn, New York');
+  assert.deepEqual(calls.find(item => item.operation === 'insights').query['filter.tags'], ['urn:tag:genre:place:live_music_venue']);
   assert.ok(venues.every(item => item.area === 'Brooklyn, New York'));
+  assert.ok(venues.every(item => item.kind === 'Live music venue'));
   assert.equal(provider.area, 'Manhattan, New York');
   const before = calls.length;
   await assert.rejects(provider.suggest([film.entity_id], 'person@example.invalid'), { code: 'invalid_area' });
   assert.equal(calls.length, before);
+});
+
+test('recommendation explanations keep only confirmed input contributions', async () => {
+  const provider = stub(async () => envelope('recommend', [{ ...row(11), explainability: { signals: [{ entity_id: id(1), score: 0.75 }] } }]));
+  const result = await provider.suggest([id(1)], 'Manhattan, New York', 'cafe');
+  assert.deepEqual(result[0].explanation, [{ entityId: id(1), score: 0.75 }]);
+  assert.equal(result[0].kind, 'Cafe');
+  await assert.rejects(stub(async () => envelope('recommend', [{ ...row(11), explainability: { signals: [{ entity_id: id(99), score: 1 }] } }])).suggest([id(1)]), { code: 'invalid_provider_result' });
 });

@@ -39,7 +39,7 @@ function InterestSearch({ member, request, onPick, disabled }) {
   </div>;
 }
 
-export function GroupEditor({ members, entities, request, onPick, onChange, disabled, compare, dirty, area, mode, onAreaChange }) {
+export function GroupEditor({ members, entities, request, onPick, onChange, disabled, compare, dirty, area, mode, onAreaChange, venueType, venueTypes, onVenueTypeChange }) {
   const lookup = new Map(entities.map(e => [e.id, e]));
   function add() {
     const id = Array.from({ length: 6 }, (_, i) => `person-${i + 1}`).find(id => !members.some(m => m.id === id));
@@ -48,10 +48,19 @@ export function GroupEditor({ members, entities, request, onPick, onChange, disa
   return <section className="group-editor" aria-labelledby="group-title">
     <div className="section-heading"><h2 id="group-title">1. Build your group</h2><span>{members.length} people</span></div>
     <p className="section-note">One to four interests each. No names or accounts needed.</p>
-    <div className="meeting-area">
-      <label htmlFor="meeting-area">Meeting area</label>
-      <input id="meeting-area" value={area} onChange={e => onAreaChange(e.target.value)} maxLength={100} autoComplete="off" disabled={disabled || mode !== 'qloo'} aria-describedby="area-help" />
-      <p id="area-help" className="field-message">{mode === 'qloo' ? 'Use a public city or neighborhood. Do not enter a personal address.' : 'Fictional venues are available only in this example neighborhood.'}</p>
+    <div className="meeting-settings">
+      <div className="meeting-area">
+        <label htmlFor="meeting-area">Meeting area</label>
+        <input id="meeting-area" value={area} onChange={e => onAreaChange(e.target.value)} maxLength={100} autoComplete="off" disabled={disabled || mode !== 'qloo'} aria-describedby="area-help" />
+        <p id="area-help" className="field-message">{mode === 'qloo' ? 'Use a public city or neighborhood. Do not enter a personal address.' : 'Fictional venues are available only in this example neighborhood.'}</p>
+      </div>
+      <div className="venue-type">
+        <label htmlFor="venue-type">Place type</label>
+        <select id="venue-type" value={venueType} onChange={e => onVenueTypeChange(e.target.value)} disabled={disabled || mode !== 'qloo'} aria-describedby="venue-type-help">
+          {venueTypes.map(option => <option value={option.id} key={option.id}>{option.label}</option>)}
+        </select>
+        <p id="venue-type-help" className="field-message">{mode === 'qloo' ? 'Qloo will filter the shortlist to this category.' : 'The fictional sample uses cafe-like venues.'}</p>
+      </div>
     </div>
     <div className="members">
       {members.map(member => <article className="member" key={member.id}>
@@ -66,6 +75,6 @@ export function GroupEditor({ members, entities, request, onPick, onChange, disa
     </div>
     <button type="button" className="button secondary add-person" onClick={add} disabled={disabled || members.length >= 6}>Add person</button>
     <button type="button" className="button primary compare" onClick={compare} disabled={disabled || area.trim().length < 2 || members.some(m => !m.entityIds.length)}>{disabled ? 'Working…' : 'Find common ground'}</button>
-    {dirty && <p className="field-message">Interests or area changed. Compare again to update the shortlist.</p>}
+    {dirty && <p className="field-message">Interests, area or place type changed. Compare again to update the shortlist.</p>}
   </section>;
 }

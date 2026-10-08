@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { GroupService } from './service.js';
 import { configuredProvider } from './provider.js';
 import { publicError } from './errors.js';
+import { VENUE_TYPES } from './venue-types.js';
 
 export function makeMcpServer(service = new GroupService(configuredProvider())) {
   const server = new McpServer({ name: 'common-ground', version: '0.1.0' });
@@ -25,7 +26,8 @@ export function makeMcpServer(service = new GroupService(configuredProvider())) 
   add('compare_places', 'Compare a common set of places for two to six anonymous people using confirmed interest IDs. In Qloo mode this sends those public IDs and the public meeting area to Qloo. Rank regret is an ordinal compromise measure, not a personal probability. Does not book, purchase or message.', {
     groups: z.array(z.object({ id: z.string().regex(/^person-[1-6]$/), entityIds: z.array(z.string()).min(1).max(4) })).min(2).max(6),
     area: z.string().min(2).max(100).optional().describe('Public city or neighborhood. Do not include contact details or a personal address.'),
-  }, ({ groups, area }) => service.compare(groups, area), false, true);
+    venueType: z.enum(VENUE_TYPES.map(item => item.id)).optional().describe('Type of meeting place: cafe, bar, restaurant or music-venue.'),
+  }, ({ groups, area, venueType }) => service.compare(groups, area, venueType), false, true);
   add('exclude_place', 'Exclude a venue the user rejected. It stays excluded across later comparisons until explicitly restored or the group is reset.', { id: z.string() }, ({ id }) => service.veto(id));
   add('restore_place', 'Restore a previously excluded venue only when the user asks to reconsider it.', { id: z.string() }, ({ id }) => service.veto(id, true));
   add('reset_group', 'Start over and clear this local group, confirmations and exclusions when requested.', {}, () => service.reset());

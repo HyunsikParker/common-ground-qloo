@@ -1,5 +1,29 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Qloo and D1 payloads are untyped external data with explicit runtime guards below. */
 import { QlooProvider } from './domain/qloo-provider.js';
 import { AppError } from './domain/errors.js';
+import { VENUE_TYPES } from './domain/venue-types.js';
+
+const OPERATOR_CAP=1000;
+// Calls made through the private local verifier after the production D1 row was
+// seeded. Keeping this offset in the deployed guard preserves one shared cap.
+export const OFF_PLATFORM_REQUESTS_AFTER_BOOTSTRAP=14;
+const venueTags=new Set(VENUE_TYPES.map(item=>item.tagId));
+
+function explainability(row:any){
+  const values=row?.query?.explainability?.['signal.interests.entities'];
+  if(values===undefined)return undefined;
+  if(!Array.isArray(values)||values.length>4)return{invalid:true};
+  const signals=values.map((value:any)=>({entity_id:value?.entity_id,score:value?.score}));
+  if(signals.some((value:any)=>typeof value.entity_id!=='string'||!Number.isFinite(value.score)))return{invalid:true};
+  return{signals};
+}
+
+export async function allowanceStatus(db:D1Database){
+  const row=await db.prepare('SELECT used FROM qloo_allowance WHERE id=?').bind('event').first<any>();
+  if(!row||!Number.isSafeInteger(row.used)||row.used<0)throw new AppError('access_pending','The persistent Qloo allowance is not provisioned.',503);
+  const used=Math.min(OPERATOR_CAP,row.used+OFF_PLATFORM_REQUESTS_AFTER_BOOTSTRAP);
+  return{used,remaining:Math.max(0,OPERATOR_CAP-used),maxRequests:OPERATOR_CAP,basis:'operator'};
+}
 
 export async function policyHash(key:string) {
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key+'|operator|1000|1000|2026-11-17T04:45:00Z'));
@@ -15,10 +39,10 @@ export function hostedProvider(db:D1Database,key:string) {
       if(now>=Date.parse('2026-11-17T04:45:00Z'))throw new AppError('access_expired','The event-use window has ended.',503);
       const row=await db.prepare('SELECT policy_hash,used,last_attempt_at FROM qloo_allowance WHERE id=?').bind('event').first<any>();
       if(!row||row.policy_hash!==fingerprint)throw new AppError('access_pending','The persistent Qloo allowance is not provisioned.',503);
-      if(row.used>=1000)throw new AppError('quota_exhausted','This demo’s operator request cap has been reached.',503);
+      if(row.used+OFF_PLATFORM_REQUESTS_AFTER_BOOTSTRAP>=OPERATOR_CAP)throw new AppError('quota_exhausted','This demo’s operator request cap has been reached.',503);
       const wait=Math.max(0,row.last_attempt_at+1000-now);
       if(wait){if(now-started+wait>2500)throw new AppError('local_rate_limited','Pause briefly before another comparison.',429);await new Promise(r=>setTimeout(r,wait));continue;}
-      const changed=await db.prepare('UPDATE qloo_allowance SET used=used+1,last_attempt_at=? WHERE id=? AND policy_hash=? AND used<1000 AND last_attempt_at<=? RETURNING used').bind(now,'event',fingerprint,now-1000).first();
+      const changed=await db.prepare('UPDATE qloo_allowance SET used=used+1,last_attempt_at=? WHERE id=? AND policy_hash=? AND used<? AND last_attempt_at<=? RETURNING used').bind(now,'event',fingerprint,OPERATOR_CAP-OFF_PLATFORM_REQUESTS_AFTER_BOOTSTRAP,now-1000).first();
       if(changed)return;
     }
   }
@@ -41,7 +65,7 @@ export function hostedProvider(db:D1Database,key:string) {
       let data:any;try{data=JSON.parse(body);}catch{throw new AppError('invalid_provider_result','Qloo returned invalid JSON.',502);}
       const rows=path==='/search'?data?.results:data?.results?.entities;
       if(!Array.isArray(rows)||rows.length>take||data.error||data.errors)throw new AppError('invalid_provider_result','Qloo returned an unsupported response.',502);
-      return rows.map((row:any)=>({entity_id:row.entity_id,name:row.name,type:(typeof row.type==='string'&&row.type.startsWith('urn:entity:')?row.type:undefined)??(Array.isArray(row.types)?row.types.find((x:any)=>typeof x==='string'&&x.startsWith('urn:entity:')):undefined)??(path==='/v2/insights'&&row.type==='urn:entity'?'urn:entity:place':row.type),affinity:row.affinity??row.query?.affinity,properties:{release_year:row.properties?.release_year,description:row.properties?.short_description??row.properties?.description}}));
+      return rows.map((row:any)=>({entity_id:row.entity_id,name:row.name,type:(typeof row.type==='string'&&row.type.startsWith('urn:entity:')?row.type:undefined)??(Array.isArray(row.types)?row.types.find((x:any)=>typeof x==='string'&&x.startsWith('urn:entity:')):undefined)??(path==='/v2/insights'&&row.type==='urn:entity'?'urn:entity:place':row.type),affinity:row.affinity??row.query?.affinity,explainability:explainability(row),properties:{release_year:row.properties?.release_year,description:row.properties?.short_description??row.properties?.description}}));
     }catch(e:any){if(e instanceof AppError)throw e;console.error(JSON.stringify({operation:path,kind:e?.name??'Error',reason:String(e?.message??'request failure').replaceAll(key,'[REDACTED]').slice(0,240)}));throw new AppError(controller.signal.aborted?'provider_timeout':'provider_unavailable','The Qloo request did not complete. No alternate endpoint or retry was used.',502);}
     finally{clearTimeout(timer);}
   }
@@ -49,7 +73,7 @@ export function hostedProvider(db:D1Database,key:string) {
   const executor={execute:async(operation:string,input:any)=>{
     const take=operation==='recommend'?4:input.options.length;
     const params:any={'filter.type':'urn:entity:place','signal.interests.entities':input.signals,take};
-    if(operation==='recommend'){params['filter.location.query']=input.filter_location;params['feature.explainability']=true;}
+    if(operation==='recommend'){if(input.include_tags_operator!=='union'||!Array.isArray(input.include_tags)||input.include_tags.length!==1||!venueTags.has(input.include_tags[0]))throw new AppError('invalid_provider_input','Choose a supported venue type.');params['filter.location.query']=input.filter_location;params['filter.tags']=input.include_tags;params['operator.filter.tags']='union';params['feature.explainability']=true;}
     else if(operation==='rank')params['filter.results.entities']=input.options;
     else throw new AppError('invalid_provider_input','Unsupported Qloo operation.');
     const rows=await query('/v2/insights',params,take);

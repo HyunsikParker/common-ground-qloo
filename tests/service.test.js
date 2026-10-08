@@ -88,12 +88,64 @@ test('fictional venues cannot be presented as recommendations for a real area', 
   assert.deepEqual(service.state(), state);
 });
 
-test('the explicitly named public example uses verified public IDs and retains vetoes without repeated requests',async()=>{
-  let suggestions=0,rankings=0;
-  const provider={mode:'qloo',area:'Manhattan, New York',provenance:'Synthetic test only',async suggest(){suggestions++;return[{id:'a',name:'Synthetic A'},{id:'b',name:'Synthetic B'}];},async rank(){rankings++;return{a:1,b:.5};}};
-  const s=new GroupService(provider);let state=await s.publicExample();
-  assert.deepEqual(state.entities.map(x=>x.name),['Arrival','Miles Davis','Brian Eno']);assert.equal(suggestions,3);assert.equal(rankings,3);
-  s.veto('a');state=await s.publicExample();assert.ok(state.comparison.candidates.every(x=>x.id!=='a'));assert.equal(suggestions,3);assert.equal(rankings,3);
-  const before=s.state();provider.suggest=async()=>{throw new AppError('provider_rate_limited','Pause.',429);};
-  await assert.rejects(s.compare(state.groups,'Paris'),{code:'provider_rate_limited'});assert.deepEqual(s.state(),before);
+const syntheticSnapshot = {
+  version: 1,
+  capturedAt: '2026-10-08T12:00:00.000Z',
+  area: 'Manhattan, New York',
+  venueType: 'cafe',
+  entities: [
+    { id: '00000000-0000-4000-8000-000000000001', name: 'Arrival', kind: 'Film', detail: 'Synthetic test record' },
+    { id: '00000000-0000-4000-8000-000000000002', name: 'Miles Davis', kind: 'Artist', detail: 'Synthetic test record' },
+    { id: '00000000-0000-4000-8000-000000000003', name: 'Brian Eno', kind: 'Artist', detail: 'Synthetic test record' },
+  ],
+  groups: [1, 2, 3].map(n => ({ id: `person-${n}`, entityIds: [`00000000-0000-4000-8000-${String(n).padStart(12, '0')}`] })),
+  evidence: {
+    candidates: [
+      { id: 'a', name: 'Synthetic A', kind: 'Cafe', note: 'Invented test venue.', explanations: [{ memberId: 'person-1', contributions: [{ entityId: '00000000-0000-4000-8000-000000000001', score: 1 }] }] },
+      { id: 'b', name: 'Synthetic B', kind: 'Cafe', note: 'Invented test venue.', explanations: [] },
+    ],
+    scores: {
+      'person-1': { a: 2, b: 1 },
+      'person-2': { a: 1, b: 2 },
+      'person-3': { a: 1, b: 2 },
+    },
+    pool: { nominatedCount: 2, omittedCount: 0, limit: 10 },
+  },
+};
+
+test('the public example snapshot is shared across sessions, costs no provider requests and retains local vetoes', async () => {
+  let suggestions = 0; let rankings = 0;
+  const provider = { mode: 'qloo', area: 'Manhattan, New York', provenance: 'Synthetic test only', async suggest() { suggestions++; return []; }, async rank() { rankings++; return {}; } };
+  const first = new GroupService(provider); const second = new GroupService(provider);
+  let state = await first.publicExample(syntheticSnapshot);
+  assert.deepEqual(state.entities.map(item => item.name), ['Arrival', 'Miles Davis', 'Brian Eno']);
+  assert.equal(state.comparison.evidenceSource, 'snapshot');
+  assert.equal(state.comparison.evidenceAt, syntheticSnapshot.capturedAt);
+  first.veto('a'); state = await first.publicExample(syntheticSnapshot);
+  assert.ok(state.comparison.candidates.every(item => item.id !== 'a'));
+  assert.equal((await second.publicExample(syntheticSnapshot)).comparison.candidates.length, 2);
+  assert.equal(suggestions, 0); assert.equal(rankings, 0);
+});
+
+test('venue type is forwarded, separates the comparison cache and resets to cafe', async () => {
+  const provider = new FixtureProvider(); provider.mode = 'qloo'; provider.area = 'Manhattan, New York';
+  const seen = []; const original = provider.suggest.bind(provider);
+  provider.suggest = async (ids, area, venueType) => { seen.push({ area, venueType }); return original(ids); };
+  const service = new GroupService(provider); const found = await service.resolve('Arrival');
+  service.confirm(found.resolutionId, found.choices[0].id);
+  const groups = [1, 2].map(n => ({ id: `person-${n}`, entityIds: [found.choices[0].id] }));
+  await service.compare(groups, 'Brooklyn, New York', 'cafe');
+  await service.compare(groups, 'Brooklyn, New York', 'cafe');
+  const state = await service.compare(groups, 'Brooklyn, New York', 'bar');
+  assert.deepEqual(seen, [
+    { area: 'Brooklyn, New York', venueType: 'cafe' },
+    { area: 'Brooklyn, New York', venueType: 'cafe' },
+    { area: 'Brooklyn, New York', venueType: 'bar' },
+    { area: 'Brooklyn, New York', venueType: 'bar' },
+  ]);
+  assert.equal(state.venueType, 'bar');
+  const before = service.state();
+  await assert.rejects(service.compare(groups, 'Brooklyn, New York', 'landmark'), { code: 'invalid_venue_type' });
+  assert.deepEqual(service.state(), before);
+  assert.equal(service.reset().venueType, 'cafe');
 });

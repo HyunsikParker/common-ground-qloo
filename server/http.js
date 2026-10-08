@@ -73,7 +73,7 @@ export function createAppServer({ provider = configuredProvider(), appOrigin = p
         switch (pathname) {
           case '/api/resolve': return service.resolve(input.query);
           case '/api/confirm': return service.confirm(input.resolutionId, input.entityId);
-          case '/api/compare': return service.compare(input.groups, input.area);
+          case '/api/compare': return service.compare(input.groups, input.area, input.venueType);
           case '/api/exclude': return service.veto(input.id);
           case '/api/restore': return service.veto(input.id, true);
           case '/api/sample': return service.sample();
